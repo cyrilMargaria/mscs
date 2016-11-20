@@ -410,6 +410,13 @@ liking.
     mscs-server-command=$JAVA -Xms$INITIAL_MEMORY -Xmx$MAXIMUM_MEMORY -jar $SERVER_LOCATION/$SERVER_JAR $SERVER_ARGS
 
 #### Enabling Forge, BungeeCord, and other server software
+
+Forge can be enabled by using the following options when creating a world:
+* mscs create testWorld 25565 type=forge
+or
+* mscs create testWorld 25565 type=forge version=1.7.10
+ 
+
 Please visit the [wiki](https://github.com/MinecraftServerControl/mscs/wiki/Server-Customization-Examples)
 for additional information.
 
