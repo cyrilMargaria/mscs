@@ -265,22 +265,146 @@ compareMinecraftVersions() {
 
 # ---------------------------------------------------------------------------
 # Create a world.
+# @param 1 Forge version (recommend or free text) 
+# @param 2 minecraft version
+# @return serverJar
+# taken from https://github.com/itzg/dockerfiles/blob/master/minecraft-server/start-minecraft.sh
+# ---------------------------------------------------------------------------
+
+installForge() {
+    local server forgeVersion mineCraftVersion TMP FORGE_VERSION sorted  normForgeVersion SERVER
+    server=$1;shift
+    mineCraftVersion=$1;shift
+    #forgeVersion=$1;shift;
+    #mineCraftVersion=$(getCurrentMinecraftVersion "${server}")    
+
+    if [ -z "${mineCraftVersion}" ] ; then
+        mineCraftVersion=$(getCurrentMinecraftVersion ${server})
+    fi
+    if [ -z "${forgeVersion}" ] ; then
+        forgeVersion=RECOMMENDED
+    fi
+    case $forgeVersion in
+        RECOMMENDED)
+            TMP=`$WGET -O - -q http://files.minecraftforge.net/maven/net/minecraftforge/forge/promotions_slim.json`
+            FORGE_VERSION=$(echo ${TMP} | perl -0777ne ' use JSON;$json = decode_json ($_);print $json->{promos}{"'${mineCraftVersion}'-recommended"};')
+            if [ $FORGE_VERSION = null ]; then
+                FORGE_VERSION=$(echo ${TMP} | perl -0777ne ' use JSON;$json = decode_json ($_);print $json->{promos}{"'${mineCraftVersion}'-latest"};')
+                if [ $FORGE_VERSION = null ]; then
+                    echo "ERROR: Version $FORGE_VERSION is not supported by Forge"
+                    echo "       Refer to http://files.minecraftforge.net/ for supported versions"
+                    exit 2
+                fi
+            fi
+            ;;
+        *)
+            FORGE_VERSION=$forgeVersion
+    esac
+    
+    # URL format changed for 1.7.10 from 10.13.2.1300
+    sorted=$(printf "%s\n%s\n" $FORGE_VERSION 10.13.2.1300 | sort -V | head -1)
+    if [ \( "$mineCraftVersion" = "1.7.10" \) -a  \( "$sorted" = "10.13.2.1300" \) ]; then
+        # if $FORGEVERSION >= 10.13.2.1300
+        normForgeVersion="$mineCraftVersion-$FORGE_VERSION-$mineCraftVersion"
+    else
+        normForgeVersion="$mineCraftVersion-$FORGE_VERSION"
+    fi
+    FORGE_INSTALLER="forge-$normForgeVersion-installer.jar"
+    SERVER="forge-$normForgeVersion-universal.jar"
+    (
+      cd ${DEFAULT_SERVER_LOCATION}
+      if [ ! -e "$SERVER" ]; then
+          ${WGET} -q http://files.minecraftforge.net/maven/net/minecraftforge/forge/$normForgeVersion/$FORGE_INSTALLER
+          ${JAVA} -jar $FORGE_INSTALLER --installServer
+      fi
+    )
+    echo "${SERVER}"
+}
+
+# ---------------------------------------------------------------------------
+# Create a world.
 #
 # @param 1 The world server to create.
 # @param 2 The port of the world server.
 # @param 3 The IP address of the world server.
+# @param 4 --seed=<seed>
+# @param 5 --type=vanilla|forge
+# @param 6 --version=<version>
 # ---------------------------------------------------------------------------
 createWorld() {
-  # Create a basic server.properties file.  Values not supplied here
-  # will use default values when the world server is first started.
-  mkdir -p "$WORLDS_LOCATION/$1"
-  setServerPropertiesValue "$1" "level-name" "$1"
-  setServerPropertiesValue "$1" "server-port" "$2"
-  setServerPropertiesValue "$1" "server-ip" "$3"
-  setServerPropertiesValue "$1" "enable-query" "true"
-  setServerPropertiesValue "$1" "query.port" "$2"
-  setMSCSValue "$1" "mscs-enabled" "true"
+    local name port serverIP seed type version extraParam longArg minecraftVersion
+    name=$1;shift;
+    port=$1;shift;    
+    seed=""
+    type=vanilla
+    version=""
+    serverIP=""
+    while [ $# -ge 1 ] ; do
+        extraParam="$1";shift
+        longArg=$(echo ${extraParam} | cut -d= -f 2)
+        case "${extraParam}" in
+            seed=*)
+                seed=${longArg}
+            ;;
+            type=*)
+                type=${longArg}
+                #
+                #mscs-client-version=1.8.4
+                #mscs-server-version=1.8.4
+                #mscs-server-jar=forge-1.8.9-11.15.1.1722-installer.jar
+                #mscs-server-url=
+                #
+            ;;
+            version=*)                
+                version=$(getMinecraftVersion "${longArg}")               
+                ;;
+            *)
+                serverIP="${extraParam}";
+                ;;
+        esac
+    done
+    
+    # Create a basic server.properties file.  Values not supplied here
+    # will use default values when the world server is first started.
+    mkdir -p "$WORLDS_LOCATION/${name}"
+    if [ -n "${version}" ] ; then        
+        # version type: release or snapshot
+        setMSCSValue "${name}" "mscs-version-type" "${version}"
+        minecraftVersion=${version}
+    else
+        minecraftVersion=$(getCurrentMinecraftVersion ${name})
+    fi
+    # fetch type ..
+    if [ -n "${type}" ] ; then
+        case "${type}" in
+            vanilla)
+            ;;
+            forge)
+                jar=$(installForge "${name}" "${minecraftVersion}")
+                if [ -n "${jar}" ] ; then 
+                    setMSCSValue "${name}" "mscs-client-version" "${minecraftVersion}"
+                    setMSCSValue "${name}" "mscs-server-version" "${minecraftVersion}"
+                    setMSCSValue "${name}" "mscs-server-jar" "${jar}"
+                    setMSCSValue "${name}" "mscs-server-url" ""
+                fi
+            ;;
+            *)
+                echo "Server type ${type} not supported" 
+                ;;
+        esac
+    fi
+    setServerPropertiesValue "${name}" "level-name" "${name}"
+    setServerPropertiesValue "${name}" "server-port" "${port}"
+    setServerPropertiesValue "${name}" "server-ip" "${serverIP}"
+    setServerPropertiesValue "${name}" "enable-query" "true"
+    setServerPropertiesValue "${name}" "query.port" "${port}"
+    if [ -n "${seed}" ] ; then 
+        setServerPropertiesValue "${name}" "level-seed" "${seed}"
+    fi
+    setMSCSValue "${name}" "mscs-enabled" "true"
+    exit 0
 }
+
 
 # ---------------------------------------------------------------------------
 # Delete a world.
@@ -528,6 +652,65 @@ setServerPropertiesValue() {
 }
 
 # ---------------------------------------------------------------------------
+# Get the version string of a 
+# @param 1 requested version: latest, snapshot of version number
+# ---------------------------------------------------------------------------
+
+getMinecraftVersion() {
+    local requestedVersion versionType result
+    requestedVersion=$1;shift;
+    if [ -z "${requestedVersion}" ] ; then
+        requestedVersion=latest
+    fi
+    versionType=""
+    case "${requestedVersion}" in
+        LATEST|latest)
+            versionType=release
+            ;;
+        SNAPSHOT|snapshot)
+            versionType=snapshot
+            ;;
+        [1-9]*)
+            result=${requestedVersion}
+            ;;
+        *)
+            versionType=release
+            ;;
+    esac
+    if [ -n "${versionType}" ] ; then
+         if [ -s $VERSIONS_JSON ]; then
+             # Make a backup copy of the version_manifest.json file.
+             cp -p "$VERSIONS_JSON" "$VERSIONS_JSON.bak"
+             # Delete the version_manifest.json file if it is old.
+             find "$VERSIONS_JSON" -mmin +"$VERSIONS_DURATION" -delete
+         fi
+         # Download the version_manifest.json file if it does not exist.
+         if [ ! -s $VERSIONS_JSON ]; then
+             $WGET --no-use-server-timestamps -qO "$VERSIONS_JSON" "$MINECRAFT_VERSIONS_URL"
+             if [ $? -ne 0 ]; then
+                 if [ -s $VERSIONS_JSON.bak ]; then
+                     printf "Error downloading the Minecraft version_manifest.json file, using an old copy.\n"
+                     cp -p "$VERSIONS_JSON.bak" "$VERSIONS_JSON"
+                 else
+                     printf "Error downloading the Minecraft version_manifest.json file.\n"
+                     exit 1
+                 fi
+             fi
+         fi
+         # get the version 
+         result=$($PERL -0777ne 'use JSON;$json = decode_json ($_);print $json->{latest}{'${versionType}'};' $VERSIONS_JSON)    
+
+         # Print an error and exit if the version string is empty.
+         if [ -z "${result}" ]; then
+             printf "Error detecting the current Minecraft version.\n"
+             exit 1
+         fi
+    fi
+    echo "${result}"
+}
+
+
+# ---------------------------------------------------------------------------
 # Get the current Minecraft version number.
 #
 # @param 1 The world server.
@@ -539,36 +722,7 @@ getCurrentMinecraftVersion() {
   mkdir -p "$DEFAULT_SERVER_LOCATION"
   # Determine the version type for the current world.
   TYPE=$(getMSCSValue "$1" "mscs-version-type" "$DEFAULT_VERSION_TYPE")
-  if [ -s $VERSIONS_JSON ]; then
-    # Make a backup copy of the version_manifest.json file.
-    cp -p "$VERSIONS_JSON" "$VERSIONS_JSON.bak"
-    # Delete the version_manifest.json file if it is old.
-    find "$VERSIONS_JSON" -mmin +"$VERSIONS_DURATION" -delete
-  fi
-  # Download the version_manifest.json file if it does not exist.
-  if [ ! -s $VERSIONS_JSON ]; then
-    $WGET --no-use-server-timestamps -qO "$VERSIONS_JSON" "$MINECRAFT_VERSIONS_URL"
-    if [ $? -ne 0 ]; then
-      if [ -s $VERSIONS_JSON.bak ]; then
-        printf "Error downloading the Minecraft version_manifest.json file, using an old copy.\n"
-        cp -p "$VERSIONS_JSON.bak" "$VERSIONS_JSON"
-      else
-        printf "Error downloading the Minecraft version_manifest.json file.\n"
-        exit 1
-      fi
-    fi
-  fi
-  # Extract the current version information.
-  VERSION=$($PERL -0777ne '
-    use JSON;
-    $json = decode_json ($_);
-    print $json->{latest}{'$TYPE'};
-  ' $VERSIONS_JSON)
-  # Print an error and exit if the version string is empty.
-  if [ -z "$VERSION" ]; then
-    printf "Error detecting the current Minecraft version.\n"
-    exit 1
-  fi
+  VERSION=$(getMinecraftVersion "${TYPE}")
   echo "$VERSION"
 }
 
@@ -2077,11 +2231,11 @@ case "$1" in
       if [ -z "$3" ]; then
         printf "A name and port for the new world must be supplied.\n"
         printf "An IP address is optional and usually not needed.\n"
-        printf "  Usage: $PROG create <world> <port> [<ip>]\n"
+        printf "  Usage: $PROG create <world> <port> [<ip>] [seed=<seed>] [type=vanilla|forge]\n"
         exit 1
       else
         printf "Creating Minecraft world: $2"
-        createWorld "$2" "$3" "$4"
+        createWorld "$2" "$3" "$4" "$5" "$6" 
         printf ".\n"
       fi
     elif [ -z "$(getAvailableWorlds)" ]; then
