@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/sh -x
 
 # ---------------------------------------------------------------------------
 # Copyright (c) 2011-2016, Jason M. Wood <sandain@hotmail.com>
@@ -47,6 +47,10 @@ PYTHON=$(which python)
 WGET=$(which wget)
 RDIFF_BACKUP=$(which rdiff-backup)
 SOCAT=$(which socat)
+TAIL=$(which tail)
+
+OS_SYSTEM=`uname -s`
+
 
 # Script Usage
 # ---------------------------------------------------------------------------
@@ -173,7 +177,7 @@ getJavaPID() {
   MCUSER=$(whoami)
   PID=$(
     ps -a -U $MCUSER -o pid,comm,args -ww |
-    $PERL -ne 'if ($_ =~ /^\s*(\d+)\s+java.+mscs-world='$1'$/) { print $1; }'
+    $PERL -ne 'if ($_ =~ /^\s*(\d+)\s+.*java.+mscs-world='$1'$/) { print $1; }'
   )
   printf "%d\n" $PID
 }
@@ -275,26 +279,34 @@ installForge() {
     local server forgeVersion mineCraftVersion TMP FORGE_VERSION sorted  normForgeVersion SERVER
     server=$1;shift
     mineCraftVersion=$1;shift
-    #forgeVersion=$1;shift;
+    forgeVersion=$1;shift;
     #mineCraftVersion=$(getCurrentMinecraftVersion "${server}")    
-
     if [ -z "${mineCraftVersion}" ] ; then
         mineCraftVersion=$(getCurrentMinecraftVersion ${server})
     fi
     if [ -z "${forgeVersion}" ] ; then
-        forgeVersion=RECOMMENDED
+        forgeVersion=stable
     fi
     case $forgeVersion in
-        RECOMMENDED)
+        stable)
             TMP=`$WGET -O - -q http://files.minecraftforge.net/maven/net/minecraftforge/forge/promotions_slim.json`
             FORGE_VERSION=$(echo ${TMP} | perl -0777ne ' use JSON;$json = decode_json ($_);print $json->{promos}{"'${mineCraftVersion}'-recommended"};')
-            if [ $FORGE_VERSION = null ]; then
+            if [ -z "$FORGE_VERSION"  ]; then
                 FORGE_VERSION=$(echo ${TMP} | perl -0777ne ' use JSON;$json = decode_json ($_);print $json->{promos}{"'${mineCraftVersion}'-latest"};')
-                if [ $FORGE_VERSION = null ]; then
+                if [ -z "$FORGE_VERSION" ]; then
                     echo "ERROR: Version $FORGE_VERSION is not supported by Forge"
                     echo "       Refer to http://files.minecraftforge.net/ for supported versions"
                     exit 2
                 fi
+            fi
+            ;;
+        latest)
+            TMP=`$WGET -O - -q http://files.minecraftforge.net/maven/net/minecraftforge/forge/promotions_slim.json`
+            FORGE_VERSION=$(echo ${TMP} | perl -0777ne ' use JSON;$json = decode_json ($_);print $json->{promos}{"'${mineCraftVersion}'-latest"};')
+            if [ -z "$FORGE_VERSION" ]; then
+                echo "ERROR: Version $FORGE_VERSION is not supported by Forge"
+                echo "       Refer to http://files.minecraftforge.net/ for supported versions"
+                exit 2
             fi
             ;;
         *)
@@ -302,7 +314,7 @@ installForge() {
     esac
     
     # URL format changed for 1.7.10 from 10.13.2.1300
-    sorted=$(printf "%s\n%s\n" $FORGE_VERSION 10.13.2.1300 | sort -V | head -1)
+    sorted=$(printf "%s\n%s\n" $FORGE_VERSION 10.13.2.1300 | sort -n | head -1)
     if [ \( "$mineCraftVersion" = "1.7.10" \) -a  \( "$sorted" = "10.13.2.1300" \) ]; then
         # if $FORGEVERSION >= 10.13.2.1300
         normForgeVersion="$mineCraftVersion-$FORGE_VERSION-$mineCraftVersion"
@@ -310,13 +322,17 @@ installForge() {
         normForgeVersion="$mineCraftVersion-$FORGE_VERSION"
     fi
     FORGE_INSTALLER="forge-$normForgeVersion-installer.jar"
+    (>&2 echo "Forge ${forgeVersion} for minecraft ${mineCraftVersion} : ${FORGE_INSTALLER}")
     SERVER="forge-$normForgeVersion-universal.jar"
     (
-      cd ${DEFAULT_SERVER_LOCATION}
-      if [ ! -e "$SERVER" ]; then
-          ${WGET} -q http://files.minecraftforge.net/maven/net/minecraftforge/forge/$normForgeVersion/$FORGE_INSTALLER
-          ${JAVA} -jar $FORGE_INSTALLER --installServer
-      fi
+        mkdir -p ${DEFAULT_SERVER_LOCATION}
+        cd ${DEFAULT_SERVER_LOCATION}
+        if [ ! -e "${FORGE_INSTALLER}" ] ; then
+            ${WGET} -q http://files.minecraftforge.net/maven/net/minecraftforge/forge/$normForgeVersion/$FORGE_INSTALLER
+        fi       
+        if [ ! -e "$SERVER" ]; then
+            ${JAVA} -jar $FORGE_INSTALLER --installServer
+        fi
     )
     echo "${SERVER}"
 }
@@ -332,7 +348,7 @@ installForge() {
 # @param 6 --version=<version>
 # ---------------------------------------------------------------------------
 createWorld() {
-    local name port serverIP seed type version extraParam longArg minecraftVersion
+    local name port serverIP seed type version extraParam longArg minecraftVersion forgeVersion   
     name=$1;shift;
     port=$1;shift;    
     seed=""
@@ -358,6 +374,9 @@ createWorld() {
             version=*)                
                 version=$(getMinecraftVersion "${longArg}")               
                 ;;
+            forgeVersion=*)
+                forgeVersion=${longArg}
+                ;;
             *)
                 serverIP="${extraParam}";
                 ;;
@@ -380,7 +399,8 @@ createWorld() {
             vanilla)
             ;;
             forge)
-                jar=$(installForge "${name}" "${minecraftVersion}")
+                #installForge "${name}" "${minecraftVersion}"
+                jar=$(installForge "${name}" "${minecraftVersion}" "${forgeVersion}")
                 if [ -n "${jar}" ] ; then 
                     setMSCSValue "${name}" "mscs-client-version" "${minecraftVersion}"
                     setMSCSValue "${name}" "mscs-server-version" "${minecraftVersion}"
@@ -1120,10 +1140,10 @@ watchLog() {
   # Make sure that the latest.log file exists.
   if [ -e "$WORLD_DIR/logs/latest.log" ]; then
     # Watch the log file of worlds running Minecraft 1.7 +.
-    tail -n0 -f --pid=$(getJavaPID "$1") $WORLD_DIR/logs/latest.log
+    ${TAIL} -n0 -f --pid=$(getJavaPID "$1") $WORLD_DIR/logs/latest.log
   elif [ -e "$WORLD_DIR/server.log" ]; then
     # Watch the log file of worlds running older Minecraft servers.
-    tail -n0 -f --pid=$(getJavaPID "$1") $WORLD_DIR/server.log
+    ${TAIL} -n0 -f --pid=$(getJavaPID "$1") $WORLD_DIR/server.log
   fi
 }
 
@@ -1151,7 +1171,7 @@ serverConsole() {
   # Make sure that the world's directory exists.
   WORLD_DIR="$WORLDS_LOCATION/$1"
   # Follow the console output buffer file.
-  tail -f --pid=$$ $WORLD_DIR/console.out &
+  ${TAIL} -f --pid=$$ $WORLD_DIR/console.out &
   # Copy user input to the console input buffer file.
   while read LINE; do
     echo "$LINE" >> $WORLD_DIR/console.in
@@ -1215,7 +1235,7 @@ start() {
     exit 1
   fi
   # Start the server.
-  sh -c "tail -f --pid=\$$ $WORLD_DIR/console.in | {
+  sh -c "${TAIL} -f --pid=\$$ $WORLD_DIR/console.in | {
     $SERVER_COMMAND mscs-world=$1 > $WORLD_DIR/console.out 2>&1; kill \$$;
   }" &
   # Verify the server is running.
@@ -1550,10 +1570,10 @@ queryStart() {
   # Initialize the query.in and query.out buffer files.
   printf '' > "$WORLD_DIR/query.in"
   printf '' > "$WORLD_DIR/query.out"
-  # Start a tail process to watch for changes to the query.in file to pipe
+  # Start a ${TAIL} process to watch for changes to the query.in file to pipe
   # to the Minecraft query server via socat.  The response from the query
   # server is piped into the query.out file.
-  tail -f --pid=$(getJavaPID $1) "$WORLD_DIR/query.in" | \
+  ${TAIL} -f --pid=$(getJavaPID $1) "$WORLD_DIR/query.in" | \
     $SOCAT - UDP:$SERVER_IP:$QUERY_PORT > "$WORLD_DIR/query.out"
   # Verify the connection to the query server worked.
   if [ $? -ne 0 ]; then
@@ -1659,7 +1679,7 @@ queryStatus() {
 }
 
 # ---------------------------------------------------------------------------
-# Send a detailed status query to the Minecraft query server.
+# Send a de${TAIL}ed status query to the Minecraft query server.
 #
 # @param 1 The world server of interest.
 # @return Tab separated values:
@@ -1807,6 +1827,23 @@ worldStatus() {
 
 # Make sure that Java, Perl, Python, Wget, Rdiff-backup, and Socat are installed.
 # ---------------------------------------------------------------------------
+if [ "${OS_SYSTEM}" = "Darwin" ] ; then
+    # OSX : supported with caveat : homebrew is needed, with coreutils for tail --pid
+    if [ ! -e "$TAIL" ]; then
+        # try gtail
+        TAIL=$(which gtail)
+    fi
+    if ($TAIL --pid=1 /dev/null 2>&1 | grep -q "illegal option") ; then
+        TAIL=$(which gtail)
+        if [ ! -e "$TAIL" ]; then
+            printf "ERROR: tail or gtail not intalled!\n"
+            printf "Try installing with this: install gnu coreutils:\n"
+            printf "  Using homebrew (http://brew.sh/) : brew install coreutils\n"
+        fi
+    fi
+fi
+    #
+
 if [ ! -e "$JAVA" ]; then
   printf "ERROR: Java not found!\n"
   printf "Try installing this with:\n"
@@ -1818,6 +1855,14 @@ if [ ! -e "$PERL" ]; then
   printf "Try installing this with:\n"
   printf "sudo apt-get install perl\n"
   exit 1
+else
+    # Check if the JSON module is install
+    if ! (${PERL} -e 'use JSON') ; then
+         printf "ERROR: Perl JSON Module not found!\n"
+         printf "Try installing this with:\n"
+         printf "sudo perl -MCPAN -e 'install JSON'\n"
+         exit 1
+    fi
 fi
 if [ ! -e "$PYTHON" ]; then
   printf "ERROR: Python not found!\n"
@@ -1828,19 +1873,31 @@ fi
 if [ ! -e "$WGET" ]; then
   printf "ERROR: GNU Wget not found!\n"
   printf "Try installing this with:\n"
-  printf "sudo apt-get install wget\n"
+  if [ "${OS_SYSTEM}" = "Darwin" ] ; then
+      printf "  Using homebrew (http://brew.sh/) : brew install wget\n"
+  else
+      printf "sudo apt-get install wget\n"
+  fi
   exit 1
 fi
 if [ ! -e "$RDIFF_BACKUP" ]; then
   printf "ERROR: rdiff-backup not found!\n"
   printf "Try installing this with:\n"
-  printf "sudo apt-get install rdiff-backup\n"
+  if [ "${OS_SYSTEM}" = "Darwin" ] ; then
+      printf "  Using homebrew (http://brew.sh/) : brew install rdiff-backup\n"
+  else     
+      printf "sudo apt-get install rdiff-backup\n"
+  fi
   exit 1
 fi
 if [ ! -e "$SOCAT" ]; then
   printf "ERROR: socat not found!\n"
   printf "Try installing this with:\n"
-  printf "sudo apt-get install socat\n"
+  if [ "${OS_SYSTEM}" = "Darwin" ] ; then
+      printf "  Using homebrew (http://brew.sh/) : brew install socat\n"
+  else 
+      printf "sudo apt-get install socat\n"
+  fi
   exit 1
 fi
 
@@ -2234,9 +2291,10 @@ case "$1" in
         printf "  Usage: $PROG create <world> <port> [<ip>] [seed=<seed>] [type=vanilla|forge]\n"
         exit 1
       else
-        printf "Creating Minecraft world: $2"
-        createWorld "$2" "$3" "$4" "$5" "$6" 
-        printf ".\n"
+          printf "Creating Minecraft world: $2"
+          shift
+          createWorld $*
+          printf ".\n"
       fi
     elif [ -z "$(getAvailableWorlds)" ]; then
       printf 'Creating default world "%s" at default port %s' \

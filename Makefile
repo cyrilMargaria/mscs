@@ -1,30 +1,29 @@
-MSCS_USER := minecraft
-MSCS_GROUP := minecraft
-MSCS_HOME := /opt/mscs
-
-MSCTL := /usr/local/bin/msctl
-MSCS := /usr/local/bin/mscs
-MSCS_INIT_D := /etc/init.d/mscs
-MSCS_SERVICE := /etc/systemd/system/mscs.service
-MSCS_COMPLETION := /etc/bash_completion.d/mscs
+MSCS_USER  ?= minecraft
+MSCS_GROUP ?= minecraft
+INSTALL_ROOT ?=/
+MSCS_HOME  ?= $(INSTALL_ROOT)opt/mscs
+INSTALL_PREFIX ?= $(INSTALL_ROOT)usr/local
+INSTALL_CONF_PREFIX ?= $(INSTALL_ROOT)etc
+MSCTL := $(INSTALL_PREFIX)/bin/msctl
+MSCS := $(INSTALL_PREFIX)/bin/mscs
+MSCS_INIT_D := $(INSTALL_CONF_PREFIX)/init.d/mscs
+MSCS_SERVICE := $(INSTALL_CONF_PREFIX)/systemd/system/mscs.service
+MSCS_COMPLETION := $(INSTALL_CONF_PREFIX)/bash_completion.d/mscs
 
 UPDATE_D := $(wildcard update.d/*)
 
 .PHONY: install update clean
 
-install: $(MSCS_HOME) update
-	useradd --system --user-group --create-home --home $(MSCS_HOME) $(MSCS_USER)
+install: $(MSCS_HOME) $(INSTALL_PREFIX)/bin $(INSTALL_CONF_PREFIX)/init.d/ $(INSTALL_CONF_PREFIX)/bash_completion.d/ update
+	-useradd --system --user-group --create-home --home $(MSCS_HOME) $(MSCS_USER)
 	chown -R $(MSCS_USER):$(MSCS_GROUP) $(MSCS_HOME)
-	if which systemctl; then \
-		systemctl -f enable mscs.service; \
-	else \
-		ln -s $(MSCS) $(MSCS_INIT_D); \
-		update-rc.d mscs defaults; \
-	fi
+	if which systemctl; then systemctl -f enable mscs.service; \
+	else if which update-rc.d; then ln -s $(MSCS) $(MSCS_INIT_D); update-rc.d mscs defaults; fi ;fi
 
 update:
 	cp msctl $(MSCTL)
-	cp mscs $(MSCS)
+	sed 's/^[[:blank:]]*USER_NAME=.*$$/USER_NAME="$(MSCS_USER)"/;s#^[[:blank:]]*LOCATION=.*$$#LOCATION="$(MSCS_HOME)"#'  mscs > $(MSCS)
+	chmod 755 $(MSCS)
 	cp mscs.completion $(MSCS_COMPLETION)
 	if which systemctl; then \
 		cp mscs.service $(MSCS_SERVICE); \
@@ -43,5 +42,5 @@ clean:
 	fi
 	rm -f $(MSCTL) $(MSCS) $(MSCS_COMPLETION)
 
-$(MSCS_HOME):
-	mkdir -p -m 755 $(MSCS_HOME)
+$(MSCS_HOME) $(INSTALL_CONF_PREFIX)/init.d/ $(INSTALL_CONF_PREFIX)/bash_completion.d/ $(INSTALL_PREFIX)/bin:
+	mkdir -p -m 755 $@

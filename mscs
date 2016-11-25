@@ -14,6 +14,8 @@
 
 # Get executable name
 PROG=$(basename $0)
+if (echo $0 | grep -q -e '^/') ;then full_prog=$0; else full_prog=`pwd`/$0 ;fi;full_prog=${full_prog//\/.\//\/}
+progName=`basename ${full_prog}` ; scriptPath=`dirname ${full_prog}` 
 
 # Setup the default user name.
 USER_NAME="minecraft"
@@ -26,10 +28,20 @@ MSCS_DEFAULTS="$LOCATION/mscs.defaults"
 
 # Setup the arguments to the msctl script.
 MSCS_ARGS="-p $PROG -l $LOCATION -c $MSCS_DEFAULTS $@"
+MSCTL=$(which msctl)
+if [  ! -e "${MSCTL}" ] ; then
+    # not in path: try in the same directory as mscs
+    MSCTL=${scriptPath}/msctl
+fi
 
+if [  !  -e "${MSCTL}" ] ; then
+    echo "ERROR: msctl is not found in  $PATH and ${scriptPath}/   ${MSCTL}"
+    exit 1;
+fi
+echo "MAIN Script" ${MSCTL}
 # Run the msctl script.
 if [ "$USER_NAME" = "$(whoami)" ]; then
-  msctl $MSCS_ARGS
+  ${MSCTL} $MSCS_ARGS
 else
-  sudo -u $USER_NAME msctl $MSCS_ARGS
+  sudo -u $USER_NAME ${MSCTL} $MSCS_ARGS
 fi

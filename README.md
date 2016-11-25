@@ -82,7 +82,16 @@ requirements that this script has that may not already be in place:
 If you are running Debian or Ubuntu, you can make sure that these are
 installed by running:
 
-    sudo apt-get install default-jre perl libjson-perl python make wget rdiff-backup socat iptables
+    sudo apt-get install default-jre perl libjson-perl python make
+    wget rdiff-backup socat iptables
+
+### OSX installation
+ Its possible to run mscs on OSX, its recommended to use Homebrew
+ (brew.sh) and install the following dependencies by running:
+
+    brew install coreutils wget socat rdiff-backup
+    sudo perl -MCPAN -e 'install JSON'
+
 
 ### Configuring the firewall / NAT
 If you have a firewall installed on your computer, or a router using NAT
@@ -155,6 +164,14 @@ If you get a permission error, please see the [troubleshooting]
 That's it!
 If you wish to configure the script manually, please visit the [wiki page]
 (https://github.com/MinecraftServerControl/mscs/wiki/Manual-Configuration).
+
+#### OSX Specific
+
+You have to create the user and groups manually and indicate it to the
+install Makefile:
+
+    sudo make MSCS_USER=user MSCS_GROUP=group install
+
 
 ### Updating MSCS
 Periodically Minecraft Server Control Script is updated to address bug fixes
@@ -414,8 +431,15 @@ liking.
 Forge can be enabled by using the following options when creating a world:
 * mscs create testWorld 25565 type=forge
 or
-* mscs create testWorld 25565 type=forge version=1.7.10
- 
+* mscs create testWorld 25565  type=forge version=1.7.10 
+
+If you get an error 403 when installing the forge, try to check the
+forge version on https://files.minecraftforge.net/ and install
+manually the version in /opt/mscs/server and manually install it, mscs
+will pick the version and set the correct env
+* mscs  create testWorld 25565 type=forge forgeVersion=10.13.4.1614  version=1.7.10
+
+
 
 Please visit the [wiki](https://github.com/MinecraftServerControl/mscs/wiki/Server-Customization-Examples)
 for additional information.
